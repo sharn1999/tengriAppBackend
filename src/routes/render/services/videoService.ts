@@ -18,6 +18,7 @@ interface VideoSearchResult {
 
 export async function getVideos(fullText, duration) {
 
+  console.log(duration);
   
   const promptMain = `
   Task:
