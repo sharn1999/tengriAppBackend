@@ -29,13 +29,18 @@ class RenderService {
     
     
 
-    const composition = await selectComposition({
+      let composition;
+
+    try {
+      composition = await selectComposition({
         serveUrl: 'https://remotionlambda-useast1-ucflzjx2s0.s3.us-east-1.amazonaws.com/sites/my-video/index.html',
         id: compositionId,
         inputProps,
-    });
-
-    console.log(2);
+      });
+      console.log(2);
+    } catch (error) {
+        console.error("Error selecting composition:", error);
+    }
     
     const outputLocation = `out/${userId}/${compositionId}.mp4`;
     try {
