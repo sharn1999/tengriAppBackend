@@ -61,10 +61,19 @@ class RenderService {
         
         await deleteFileFromS3({key: audioKey, bucketName: process.env.AWS_BUCKET_NAME as string});
         await deleteFileFromS3({key: subtitlesKey, bucketName: process.env.AWS_BUCKET_NAME as string});
+
+        console.log("deleted");
+        
         
         const finalOutput = await uploadVideoToS3({file: outputLocation, bucketName: process.env.AWS_BUCKET_NAME as string})
 
+        console.log(finalOutput);
+        
+
         await rm(`./out/${userId}`, { recursive: true, force: true });
+
+        console.log("finished");
+        
 
         return finalOutput;
     } catch (error) {
