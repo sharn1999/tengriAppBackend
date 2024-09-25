@@ -1,4 +1,4 @@
-import connectDB from "./db";
+// import connectDB from "./db";
 import express from 'express';
 import cors from 'cors';
 import globalRouter from "./routes/global-router";
@@ -20,7 +20,19 @@ app.use((req, res, next) => {
 
 // const BASE_URL = "https://www.kazvision.media"
 
-app.use(cors())
+app.use(cors({
+    origin: (origin, callback) => {
+      // Позволяет запросы с 'http://localhost:3001' и 'https://tengri-app.vercel.app'
+      const allowedOrigins = ['http://localhost:3001', 'https://tengri-app.vercel.app'];
+      if (allowedOrigins.includes(origin as string) || !origin) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true
+  }));
 
 app.use(express.json());
 
