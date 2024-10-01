@@ -16,9 +16,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// const BASE_URL = "http://localhost:3000";
-
-// const BASE_URL = "https://www.kazvision.media"
 
 app.use(cors());
 

@@ -1,39 +1,35 @@
 import dotenv from 'dotenv';
+import {createWriteStream } from 'fs'
+import https from 'https'
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path
+const ffmpeg = require('fluent-ffmpeg')
+ffmpeg.setFfmpegPath(ffmpegPath)
+import { promises as fs } from 'fs';
 
 dotenv.config();
 
-import { createClient } from "pexels";
 import { model } from './geminiService';
-
-const client = createClient(process.env.PEXELS_API as string);
-
-interface VideoSearchResult {
-  videos: {
-    video_files: {
-      link: string;
-      width: number
-    }[];
-  }[];
-}
+import { uploadVideoToS3 } from './s3/s3-module';
 
 export async function getVideos(fullText, duration) {
 
   console.log(duration);
   
   const promptMain = `
-  Task:
-    Based on the total audio duration, calculate how many video segments (each 5 seconds long) can be created. For each segment, generate a corresponding part of the description ensuring it adheres to the specifications mentioned. The result should be a list of unique Video objects where each Video contains a 'title' in English with maximum description in 3-4 words. Ensure each title is relevant to the context of the news description provided and suitable for finding stock videos. Do not use any names or colons. Each title should be concise and clear.
-  
-    Generate ${Math.ceil(duration/3)} unique and relevant titles for the topic provided in the description.
-  
-  Input JSON:
-  {
-      "description": "${fullText}",
-      "allDuration": ${duration}
-  }
-  
-  Output Schema:
-  Return a list[Video] where each Video = {"title": str}
+Task:
+Based on the total audio duration, calculate how many video segments (each 5 seconds long) can be created. For each segment, generate a corresponding part of the description ensuring it adheres to the specifications mentioned. The result should be a list of unique Video objects where each Video contains a 'title' in English, with a maximum of 2 words, no more. Ensure each title is general and visual, relevant to the context of the news description, and suitable for finding common stock videos. Titles should represent broad and easily searchable concepts that can be depicted visually. Avoid specific names, actions, or details, and instead focus on broader categories and imagery.
+
+Generate ${Math.ceil(duration/3)} unique and relevant titles for the topic provided in the description.
+
+Input JSON:
+{
+    "description": "${fullText}",
+    "allDuration": ${duration}
+}
+
+Output Schema:
+Return a list[Video] where each Video = {"title": str}
+
   `;
 
   const promptResult = await model.generateContent(promptMain);
@@ -47,15 +43,20 @@ export async function getVideos(fullText, duration) {
 
 
   for (const res of jsonResult) {
-      const video = await searchVideos(res.title);
+      const video = await getVideoId(res.title);
       
       if(video){
         console.log(video);
-        videos.push(video)
+        const mainVideo = await searchVideos(video)
+        videos.push(mainVideo)
       } else{
         const newVideo = await hasTitle(res.title)
+        if(newVideo){
+          const mainVideo = await searchVideos(newVideo)
+          videos.push(mainVideo)
+        }
         console.log(newVideo);
-        videos.push(newVideo)
+
       }
       
       videoCount++;
@@ -65,52 +66,173 @@ export async function getVideos(fullText, duration) {
   return videos
 }
 
-async function searchVideos(query: string): Promise<string | null> {
-    try {
-        const response = await client.videos.search({ query, size: "medium" }) as VideoSearchResult;
-        const videosLength = response.videos.length;
-        if (videosLength > 0) {
+async function getSessionId() {
+  return await fetch(`http://api.depositphotos.com?dp_apikey=${process.env.DEPOSIT}&dp_command=loginAsUser&dp_login_user=${process.env.LOGIN}&dp_login_password=${process.env.PASSWORD}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({})
+  })
+  .then(async response => { 
+    const data = await response.json(); 
+    console.log("Session: " + data.sessionid);
+    return data.sessionid;
+  })
+  .catch(error => {
+    console.error(error);
+    return null;
+  });
+}
 
-          let random = 0
-
-          if(videosLength > 5){
-            random = Math.floor(Math.random() * 5)
-          } else{
-            random = Math.floor(Math.random() * videosLength)
-          }
-
-            let url: string | null = null;
-
-            let max = response.videos[random].video_files[0].width
-
-            response.videos[random].video_files.forEach((el, i) => {
-              
-              if(max < el.width && el.width < 2600){
-                max = el.width;
-                url = el.link
-              }
-            })  
-            return url;
-        } else {
-            console.log('No videos found for the query:', query);
-            return null;
+async function getVideoId(query: string) {
+  return await fetch(`http://api.depositphotos.com?dp_apikey=${process.env.DEPOSIT}&dp_command=search&dp_search_query=${query}&dp_search_photo=false&dp_search_sort=1&dp_search_vector=false&dp_search_editorial=false&dp_search_video=true&dp_search_orientation=vertical`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({})
+  })
+  .then(async response => { 
+    const data = await response.json(); 
+    
+    console.log("LENGTH: " + data.result.length);
+     
+    if (data.result.length > 0) {
+      for (const el of data.result) {
+        if (el.royalty_model !== 'cpa') {
+          
+          return el.id;
         }
-    } catch (error) {
-        console.error('Search failed:', error);
-        return null;
+      }
+    } else {
+      throw new Error('No result found');
     }
+  })
+  .catch(error => {
+    console.error(error);
+    return null;
+  });
+}
+
+async function searchVideos(mediaId: string): Promise<any> {
+  console.log("MEDIA: " + mediaId);
+  
+  const sessionId = await getSessionId()
+  return await fetch(`http://api.depositphotos.com?dp_apikey=${process.env.DEPOSIT}&dp_command=getMedia&dp_session_id=${sessionId}&dp_media_id=${mediaId}&dp_media_option=hd720&dp_media_license=standard`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({})
+  })
+  .then(async response => { 
+    const data = await response.json(); 
+    console.log(data);
+    
+    console.log("LINK: " + data.downloadLink);
+
+    const outputFilePath = './video.mp4';
+
+    const filepath = await downloadFileWithTimeout(data.downloadLink, outputFilePath, 6000000)
+    .then((filePath) => {return filePath})
+    .catch((err) => console.error(err));
+
+    const outputSmallFilePath = './video-small.mp4'
+
+    await processVideo(filepath, outputSmallFilePath);
+
+
+
+    const final = await uploadVideoToS3({file: outputSmallFilePath, bucketName: process.env.AWS_BUCKET_NAME as string})
+
+    await fs.unlink(filepath as string);
+    await fs.unlink(outputSmallFilePath);
+
+    console.log(final);
+    
+
+    return final;
+  })
+  .catch(error => {
+    console.error(error);
+    return null;
+  });
+
 }
   
-async function hasTitle(title: string){
-    console.log("Cannot find: " + title);
-    
-    const result = await model.generateContent(`generate a simpler title, only one another title for this title: ${title}. DON'T USE UNDEFINED`);
-    const text = result.response.text();
-    const jsonResult = JSON.parse(text);
-    const video = await searchVideos(jsonResult.title);
-    if (video) {
-      return video
-    } else {
-      return await hasTitle(jsonResult.title)
-    }
+async function hasTitle(title: string, attempts = 0, maxAttempts = 20) {
+  console.log("Cannot find: " + title);
+  
+  if (attempts >= maxAttempts) {
+    throw new Error('Max attempts reached, unable to generate a valid title.');
   }
+
+  try {
+    const result = await model.generateContent(`Generate a unique and clear title that is different from 'undefined', 'untitled', or similar vague terms. The title should be simple and meaningful. Title should be even simpler than ${title}. Reduce the number of words.`);
+    
+    const text = await result.response.text();
+    const jsonResult = JSON.parse(text);
+
+    if (!jsonResult) {
+      throw new Error('No title found in response.');
+    }
+
+    const video = await getVideoId(jsonResult);
+    
+    if (video) {
+      return video;
+    } else {
+      return await hasTitle(jsonResult, attempts + 1); 
+    }
+  } catch (error) {
+    console.error(error);
+    return null; 
+  }
+}
+
+function downloadFileWithTimeout(url, outputFilePath, timeoutDuration = 30000) {
+  return new Promise((resolve, reject) => {
+    const file = createWriteStream(outputFilePath);
+    const request = https.get(url, (response) => {
+      if (response.statusCode === 200) {
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve(outputFilePath);
+        });
+      } else {
+        reject(new Error(`Ошибка: статус ответа ${response.statusCode}`));
+      }
+    });
+
+    // Тайм-аут запроса
+    request.setTimeout(timeoutDuration, () => {
+      request.abort();
+      reject(new Error(`Ошибка: сервер не отправил данные в течение ${timeoutDuration / 1000} секунд`));
+    });
+
+    // Обработка ошибок
+    request.on('error', (err) => {
+      reject(new Error(`Ошибка при загрузке: ${err.message}`));
+    });
+  });
+}
+
+function processVideo(filepath, outputSmallFilePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(filepath)
+      .setStartTime('00:00:03')
+      .setDuration('10')
+      .output(outputSmallFilePath)
+      .on('end', function() {
+        console.log('conversion Done: ' + outputSmallFilePath);
+        resolve(outputSmallFilePath); // Успешно завершили, резолвим
+      })
+      .on('error', function(err) {
+        console.log('error: ', err);
+        reject(err); // Ошибка, передаем её в reject
+      })
+      .run();
+  });
+}
