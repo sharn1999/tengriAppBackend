@@ -105,14 +105,17 @@ async function getVideoId(query: string) {
     const data = await response.json(); 
     
     console.log("LENGTH: " + data.result.length);
+
+    const elems: string[] = []
      
     if (data.result.length > 0) {
       for (const el of data.result) {
         if (el.royalty_model !== 'cpa') {
-          
-          return el.id;
+          elems.push(el.id)
         }
       }
+      const randomIndex = Math.floor(Math.random() * elems.length);
+      return elems[randomIndex];
     } else {
       throw new Error('No result found');
     }
