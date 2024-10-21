@@ -18,6 +18,8 @@ class RenderService {
     console.log(0);
 
     const compositionId = 'MyComp';
+
+
     const inputProps = {
         audioLink,
         subtitlesLink,
@@ -53,7 +55,7 @@ class RenderService {
             codec: 'h264',
             outputLocation,
             inputProps,
-            timeoutInMilliseconds: 7200000,
+            timeoutInMilliseconds: 6000000,
         });
 
         console.log(4);
@@ -84,6 +86,8 @@ class RenderService {
   }
 
   async getText(title, description) {
+    console.log(title);
+    console.log(description);
     const fullText = await generateFullText(title, description);
     return fullText
   }
