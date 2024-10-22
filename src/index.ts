@@ -21,6 +21,10 @@ app.use(cors());
 
 app.use(express.json());
 
+app.get('/', (req, res) => {
+    res.send('Welcome to Kazvision Media');
+});
+
 app.use('/api', globalRouter);
 
 const PORT = process.env.PORT || 5000;
